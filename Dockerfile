@@ -26,6 +26,7 @@ RUN go get github.com/sendgrid/sendgrid-go
 # utils library
 RUN go get github.com/cvhariharan/Utils
 
+RUN go get github.com/fatih/set
 
 WORKDIR $HOME/go/src/app
 COPY . .
