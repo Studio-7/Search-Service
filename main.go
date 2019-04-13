@@ -163,7 +163,7 @@ func main() {
 	// Running another goroutine that listens to Changefeeds
 	go listenToChangefeeds(res)
 
-	http.HandleFunc("/search/find", utils.AuthMiddleware(searchHandler))
+	http.HandleFunc("/search/find", utils.AuthMiddleware(searchHandler, session))
 	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), nil))
 
 }
