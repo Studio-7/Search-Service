@@ -106,17 +106,21 @@ func getResults(term string, session *r.Session) []byte {
 
 // Writes a JSON response to the search query
 func searchHandler(w http.ResponseWriter, r *http.Request) {
-
+	var jsonString string
 	if err := r.ParseForm(); err != nil {
 		fmt.Fprintf(w, "ParseForm() err: %v", err)
 		return
 	}
 	searchterm := r.FormValue("query")
-	tcsJSON := getResults(searchterm, session)
+	username := r.FormValue("username")
 
+	tcsJSON := getResults(searchterm, session)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(tcsJSON)
+
+	jwt := utils.GenerateJWT(username, session)
+	jsonString = `{ "result": ` + string(tcsJSON) + `, "token": "` + jwt + "\"}"
+	w.Write([]byte(jsonString))
 }
 
 func main() {
