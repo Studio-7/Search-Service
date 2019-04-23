@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
+	"sort"
 	"github.com/cvhariharan/Utils/utils"
+	ct "github.com/cvhariharan/Utils/customtype"
 	"github.com/fatih/set"
 	"github.com/go-ego/riot"
 	"github.com/go-ego/riot/types"
@@ -80,8 +81,8 @@ func getResults(term string, session *r.Session) []byte {
 	}
 
 	// Utilizing set variable to deal with duplicate results
-	var tcs []map[string]interface{}
-	var fields map[string]interface{}
+	var tcs []ct.TravelCapsule
+	var fields ct.TravelCapsule
 	s := set.New(set.ThreadSafe)
 
 	for _, id := range ids {
@@ -98,7 +99,9 @@ func getResults(term string, session *r.Session) []byte {
 		tcs = append(tcs, fields)
 
 	}
-
+	fmt.Println(tcs)
+	sort.Sort(ct.TravelCapsules(tcs))
+	fmt.Println(tcs)
 	tcsJSON, _ = json.Marshal(tcs)
 
 	return tcsJSON
