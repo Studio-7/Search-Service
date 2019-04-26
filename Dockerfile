@@ -25,6 +25,8 @@ RUN go get github.com/sendgrid/sendgrid-go
 
 # utils library
 RUN go get github.com/cvhariharan/Utils
+RUN go get github.com/kelvins/geocoder
+RUN go get github.com/codingsince1985/geo-golang
 
 RUN go get github.com/fatih/set
 RUN go get github.com/go-ego/riot
