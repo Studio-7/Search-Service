@@ -18,7 +18,8 @@ import (
 )
 
 var (
-	searcher = riot.Engine{}
+	postSearcher = riot.Engine{}
+	userSearcher = riot.Engine{}
 )
 
 var session *r.Session
@@ -27,20 +28,34 @@ var db string
 
 var tcsJSON []byte
 
+var profileJSON []byte
+
 // Initializes the riot search engine index with posts that already exist in the database
-func initIndex(rows *r.Cursor) {
+func initPostIndex(rows *r.Cursor) {
 
 	var response map[string]interface{}
 
 	for rows.Next(&response) {
 		message := response["body"].(map[string]interface{})["message"]
-		searcher.Index(response["id"].(string), types.DocData{Content: message.(string)})
-		searcher.Flush()
+		postSearcher.Index(response["id"].(string), types.DocData{Content: message.(string)})
+		postSearcher.Flush()
+	}
+}
+
+// Initializes the riot search engine index with users that already exist in the database
+func initUserIndex(rows *r.Cursor) {
+
+	var response map[string]interface{}
+
+	for rows.Next(&response) {
+		name := response["username"]
+		userSearcher.Index(response["username"].(string), types.DocData{Content: name.(string)})
+		userSearcher.Flush()
 	}
 }
 
 // Listens to RethinkDB Changefeeds and adds new posts to the Index
-func listenToChangefeeds(res *r.Cursor) {
+func listenToPostChangefeeds(res *r.Cursor) {
 
 	var value map[string]interface{}
 
@@ -48,26 +63,76 @@ func listenToChangefeeds(res *r.Cursor) {
 		fmt.Println("Value: ", value)
 		if value["old_val"] == nil {
 			n := value["new_val"]
-			addToIndex(n)
+			addToPostIndex(n)
 		}
 	}
 }
 
 // Adds relevant fields of the post to the Index
-func addToIndex(val interface{}) {
+func addToPostIndex(val interface{}) {
 
 	p := val.(map[string]interface{})
 	body := p["body"].(map[string]interface{})
 
-	searcher.Index(p["id"].(string), types.DocData{Content: body["message"].(string)})
-	searcher.Flush()
+	postSearcher.Index(p["id"].(string), types.DocData{Content: body["message"].(string)})
+	postSearcher.Flush()
+}
+
+func listenToUserChangefeeds(res *r.Cursor) {
+
+	var value map[string]interface{}
+
+	for res.Next(&value) {
+		fmt.Println("Value: ", value)
+		if value["old_val"] == nil {
+			n := value["new_val"]
+			addToUserIndex(n)
+		}
+	}
+}
+
+// Adds relevant fields of the user to the Index
+func addToUserIndex(val interface{}) {
+
+	u := val.(map[string]interface{})
+	FName := u["FName"]
+
+	userSearcher.Index(u["UName"].(string), types.DocData{Content: FName.(string)})
+	userSearcher.Flush()
+}
+
+// Writes a JSON response to the search query
+func searchHandler(w http.ResponseWriter, r *http.Request) {
+	var jsonString string
+	if err := r.ParseForm(); err != nil {
+		fmt.Fprintf(w, "ParseForm() err: %v", err)
+		return
+	}
+	searchterm := r.FormValue("query")
+	username := r.FormValue("username")
+	
+	tcsJSON := getRelevantPosts(searchterm, session)
+	profileJSON := getRelevantUsers(searchterm, session)
+
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	result := `{ "profile": ` + string(profileJSON) + `, "post": ` + string(tcsJSON) + "}"
+
+	jwt := utils.GenerateJWT(username, session)
+	jsonString = `{ "result": ` + string(result) + `, "token": "` + jwt + "\"}"
+	
+	fmt.Println(jsonString)
+
+	w.Write([]byte(jsonString))
 }
 
 // Runs the search engine to get relevant results
-func getResults(term string, session *r.Session) []byte {
+func getRelevantPosts(term string, session *r.Session) []byte {
 
 	req := types.SearchReq{Text: term}
-	search := searcher.Search(req)
+	search := postSearcher.Search(req)
 	docs := (search.Docs).(types.ScoredDocs)
 
 	var ids []string
@@ -99,31 +164,47 @@ func getResults(term string, session *r.Session) []byte {
 		tcs = append(tcs, fields)
 
 	}
-	fmt.Println(tcs)
+
 	sort.Sort(ct.TravelCapsules(tcs))
-	fmt.Println(tcs)
 	tcsJSON, _ = json.Marshal(tcs)
 
 	return tcsJSON
 }
 
-// Writes a JSON response to the search query
-func searchHandler(w http.ResponseWriter, r *http.Request) {
-	var jsonString string
-	if err := r.ParseForm(); err != nil {
-		fmt.Fprintf(w, "ParseForm() err: %v", err)
-		return
+// Runs the search engine to get relevant results
+func getRelevantUsers(term string, session *r.Session) []byte {
+
+	req := types.SearchReq{Text: term}
+	search := userSearcher.Search(req)
+	docs := (search.Docs).(types.ScoredDocs)
+
+	var ids []string
+	var profilesList []ct.Profile
+	tol := 5
+
+	// Retrieving the most relevant users wrt the query term
+	for i := 0; i < tol; i++ {
+		if i < len(docs) {
+			ids = append(ids, docs[i].DocId)
+		}
 	}
-	searchterm := r.FormValue("query")
-	username := r.FormValue("username")
 
-	tcsJSON := getResults(searchterm, session)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	fmt.Println(ids)
 
-	jwt := utils.GenerateJWT(username, session)
-	jsonString = `{ "result": ` + string(tcsJSON) + `, "token": "` + jwt + "\"}"
-	w.Write([]byte(jsonString))
+	for _, uname := range ids {
+
+		profiles := utils.GetProfile(uname, session)
+
+		// profileRows, _ := r.DB(db).Table(os.Getenv("TCTABLE")).Get(tcID).Run(session)
+		// tcRows.One(&fields)
+
+		profilesList = append(profilesList, profiles)
+	}
+
+	profileJSON, _ = json.Marshal(profilesList)
+
+	//profileJSON:= []byte("wait")
+	return profileJSON
 }
 
 func main() {
@@ -144,7 +225,8 @@ func main() {
 
 	session = s
 
-	res, err := r.DB(db).Table(os.Getenv("POSTTABLE")).Changes().Run(session)
+	postRes, err := r.DB(db).Table(os.Getenv("POSTTABLE")).Changes().Run(session)
+	userRes, err := r.DB(db).Table(os.Getenv("USERTABLE")).Changes().Run(session)
 
 	if err != nil {
 		fmt.Println("Could not run Changefeeds")
@@ -152,25 +234,38 @@ func main() {
 	}
 
 	// Initializing the riot searcher
-	searcher.Init(types.EngineOpts{
+	postSearcher.Init(types.EngineOpts{
+		NotUseGse: true,
+	})
+
+	userSearcher.Init(types.EngineOpts{
 		NotUseGse: true,
 	})
 
 	// Retrieving already-existing posts to initialize the index with
-	rows, err := r.DB(db).Table(os.Getenv("POSTTABLE")).Run(session)
+	postRows, err := r.DB(db).Table(os.Getenv("POSTTABLE")).Run(session)
 
 	if err != nil {
-		fmt.Println("Could not retrive posts from database")
+		fmt.Println("Could not retrieve posts from database")
 		fmt.Println(err)
 		return
 	}
 
-	initIndex(rows)
+	userRows, err := r.DB(db).Table(os.Getenv("USERTABLE")).Run(session)
+
+	if err != nil {
+		fmt.Println("Could not retrieve users from database")
+		fmt.Println(err)
+		return
+	}
+
+	initPostIndex(postRows)
+	initUserIndex(userRows)
 
 	// Running another goroutine that listens to Changefeeds
-	go listenToChangefeeds(res)
+	go listenToPostChangefeeds(postRes)
+	go listenToUserChangefeeds(userRes)
 
 	http.HandleFunc("/search/find", utils.AuthMiddleware(searchHandler, session))
 	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), nil))
-
 }
